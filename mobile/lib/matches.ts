@@ -63,6 +63,47 @@ export async function createMatch(
     return data;
 }
 
+/**
+ * Creates a COMPLETED match directly (e.g. from Analytics log)
+ */
+export async function createCompletedMatch(
+    date: string,
+    venue: string,
+    kickoff: string,
+    format: string,
+    red_team: any[], // Allow simple strings if needed, but DB expects JSON
+    blue_team: any[],
+    score_red: number,
+    score_blue: number,
+    comments: string,
+    created_by: string
+): Promise<boolean> {
+    const { error } = await supabase
+        .from('matches')
+        .insert([
+            {
+                date,
+                venue,
+                kickoff,
+                format,
+                red_team,
+                blue_team,
+                status: 'completed',
+                score_red,
+                score_blue,
+                comments,
+                created_by,
+                allow_predictions: false // Completed matches don't need predictions open
+            },
+        ]);
+
+    if (error) {
+        console.error('Error logging completed match:', error);
+        return false;
+    }
+    return true;
+}
+
 export async function togglePredictions(matchId: string, allowed: boolean) {
     const { error } = await supabase
         .from('matches')
@@ -251,7 +292,7 @@ export async function startNewMatch(venue: string = 'Turf', format: string = '5v
         .single();
 
     if (error) {
-        console.error('Error starting new match:', error);
+        console.error('Error creating match:', error);
         return null;
     }
     return data;

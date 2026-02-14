@@ -63,14 +63,18 @@ function computeStats(history: MatchRecord[], leaderboard: LeaderboardEntry[]) {
     history.forEach(m => { m.teamBlue.forEach(n => allNames.add(n)); m.teamRed.forEach(n => allNames.add(n)); });
     const totalPlayers = allNames.size;
 
-    // Commitment: players who played ALL matches
-    const commitment = leaderboard.filter(p => p.matches === totalMatches);
-    // Star: highest win%
-    const star = leaderboard.length > 0 ? leaderboard[0] : null;
-    // Most losses
-    const mostLosses = [...leaderboard].sort((a, b) => b.losses - a.losses)[0] || null;
+    // Most Wins (was Commitment)
+    const maxWins = Math.max(...leaderboard.map(p => p.wins), 0);
+    const mostWins = leaderboard.filter(p => p.wins === maxWins && p.wins > 0);
 
-    return { totalMatches, totalGoals, totalPlayers, commitment, star, mostLosses };
+    // Lucky Star: highest win% (Leaderboard is already sorted by Win% then Wins)
+    const luckyStar = leaderboard.length > 0 ? leaderboard[0] : null;
+
+    // Most Losses
+    const maxLosses = Math.max(...leaderboard.map(p => p.losses), 0);
+    const mostLosses = leaderboard.filter(p => p.losses === maxLosses && p.losses > 0);
+
+    return { totalMatches, totalGoals, totalPlayers, mostWins, luckyStar, mostLosses };
 }
 
 // ═══ MATCH LOG PARSER ═══
@@ -117,7 +121,15 @@ function parseMatchLog(text: string): {
 
 // ═══ MAIN COMPONENT ═══
 export default function Analytics() {
-    const [history, setHistory] = useState<MatchRecord[]>([]);
+    // Unified History State
+    const [sheetsHistory, setSheetsHistory] = useState<MatchRecord[]>([]);
+    const [supabaseHistory, setSupabaseHistory] = useState<MatchRecord[]>([]);
+
+    // Derived complete history (Supabase matches first, then Sheets)
+    // Note: Supabase matches are likely newer, so we should prioritize them or just concatenate.
+    // We'll rely on sorting by date later.
+    const history = useMemo(() => [...supabaseHistory, ...sheetsHistory], [supabaseHistory, sheetsHistory]);
+
     const [loading, setLoading] = useState(true);
 
     // Kaarthumbi chat
@@ -132,13 +144,16 @@ export default function Analytics() {
     const [logPassword, setLogPassword] = useState('');
     const [showLogPassword, setShowLogPassword] = useState(false);
 
+    // Reuse / Add Match Mode
+    const [reuseMode, setReuseMode] = useState(false);
+    const [draftBlue, setDraftBlue] = useState<string[]>([]);
+    const [draftRed, setDraftRed] = useState<string[]>([]);
+
     // Manual Score Entry State (Replacing window)
     const [manualBlue, setManualBlue] = useState('');
     const [manualRed, setManualRed] = useState('');
     const [manualComments, setManualComments] = useState('');
 
-    // State for Supabase History
-    const [supabaseHistory, setSupabaseHistory] = useState<any[]>([]);
     const [logMatchId, setLogMatchId] = useState<string | null>(null);
 
     // Load History on mount and when log panel closes (refresh)
@@ -149,7 +164,46 @@ export default function Analytics() {
     const loadSupabaseHistory = async () => {
         const { getCompletedMatches } = await import('../../lib/matches');
         const data = await getCompletedMatches();
-        if (data) setSupabaseHistory(data);
+
+        if (data) {
+            // Transform Supabase data to match MatchRecord interface
+            const transformed: MatchRecord[] = data.map((m: any) => {
+                // Team data in Supabase is stored as JSON string or array of objects with 'name'
+                // We need array of strings for MatchRecord
+                let blueNames: string[] = [];
+                let redNames: string[] = [];
+
+                try {
+                    // Handle potential string vs object array
+                    const b = typeof m.blue_team === 'string' ? JSON.parse(m.blue_team) : m.blue_team;
+                    const r = typeof m.red_team === 'string' ? JSON.parse(m.red_team) : m.red_team;
+
+                    if (Array.isArray(b)) blueNames = b.map((p: any) => p.name || p);
+                    if (Array.isArray(r)) redNames = r.map((p: any) => p.name || p);
+                } catch (e) {
+                    console.error("Error parsing team data for match", m.id, e);
+                }
+
+                // Determine winner string
+                const sBlue = m.score_blue || 0;
+                const sRed = m.score_red || 0;
+                let winner = 'Draw';
+                if (sBlue > sRed) winner = 'Blue';
+                else if (sRed > sBlue) winner = 'Red';
+
+                return {
+                    date: new Date(m.created_at).toISOString().split('T')[0], // YYYY-MM-DD
+                    venue: m.venue,
+                    teamBlue: blueNames,
+                    teamRed: redNames,
+                    scoreBlue: sBlue,
+                    scoreRed: sRed,
+                    winner: winner,
+                    time: m.kickoff || ''
+                };
+            });
+            setSupabaseHistory(transformed);
+        }
     };
 
     // Auto-fetch active match for logging
@@ -178,7 +232,7 @@ export default function Analytics() {
 
     // Load initial data from Google Sheets (via existing logic)
     useEffect(() => {
-        fetchMatchHistory().then(data => { setHistory(data); setLoading(false); });
+        fetchMatchHistory().then(data => { setSheetsHistory(data); setLoading(false); });
     }, []);
 
     const leaderboard = useMemo(() => buildLeaderboard(history), [history]);
@@ -236,7 +290,14 @@ export default function Analytics() {
             winner,
             time: '',
         };
-        setHistory(prev => [...prev, newMatch]);
+
+        // We push to Sheets history locally for instant update, but ideally we should push to Supabase
+        // Since this function is the "Log Match" feature (Las Vegas style), 
+        // it updates local state only in the original code.
+        // But wait, the new parser logic above just sets local state.
+        // If we want this to be persistent, we should probably be using the Supabase flow via 'Mission Control'.
+        // However, to keep existing functionality working:
+        setSheetsHistory(prev => [...prev, newMatch]);
         Alert.alert('✅ Match Saved!', `${winner === 'Draw' ? 'Draw' : winner + ' wins'} — Blue ${logParsed.scoreBlue}-${logParsed.scoreRed} Red`);
         setLogText(''); setLogParsed(null); setLogPassword(''); setShowLogPassword(false); setLogOpen(false);
     };
@@ -311,21 +372,23 @@ export default function Analytics() {
                     {/* Highlight cards */}
                     <View style={s.highlightRow}>
                         <View style={[s.highlightCard, { borderBottomColor: '#1c83e1' }]}>
-                            <Text style={s.hlValue}>{stats.commitment.length}</Text>
-                            <Text style={s.hlLabel}>COMMITMENT</Text>
+                            <Text style={s.hlValue}>{stats.mostWins.length > 0 ? stats.mostWins[0].wins : 0}</Text>
+                            <Text style={s.hlLabel}>MOST WINS</Text>
                             <Text style={s.hlSub} numberOfLines={2}>
-                                {stats.commitment.map(p => p.name).join(', ') || '—'}
+                                {stats.mostWins.map(p => p.name).join(', ') || '—'}
                             </Text>
                         </View>
-                        <View style={[s.highlightCard, { borderBottomColor: '#4ade80' }]}>
-                            <Text style={s.hlValue}>{stats.star ? stats.star.winPct + '%' : '—'}</Text>
-                            <Text style={s.hlLabel}>STAR</Text>
-                            <Text style={s.hlSub}>{stats.star?.name || '—'}</Text>
+                        <View style={[s.highlightCard, { borderBottomColor: '#FCD34D' }]}>
+                            <Text style={s.hlValue}>{stats.luckyStar ? stats.luckyStar.winPct + '%' : '—'}</Text>
+                            <Text style={s.hlLabel}>LUCKY STAR</Text>
+                            <Text style={s.hlSub}>{stats.luckyStar?.name || '—'}</Text>
                         </View>
                         <View style={[s.highlightCard, { borderBottomColor: '#ef4444' }]}>
-                            <Text style={s.hlValue}>{stats.mostLosses?.losses ?? 0}</Text>
-                            <Text style={s.hlLabel}>LOSSES</Text>
-                            <Text style={s.hlSub}>{stats.mostLosses?.name || '—'}</Text>
+                            <Text style={s.hlValue}>{stats.mostLosses.length > 0 ? stats.mostLosses[0].losses : 0}</Text>
+                            <Text style={s.hlLabel}>MOST LOSSES</Text>
+                            <Text style={s.hlSub} numberOfLines={2}>
+                                {stats.mostLosses.map(p => p.name).join(', ') || '—'}
+                            </Text>
                         </View>
                     </View>
 
@@ -354,22 +417,77 @@ export default function Analytics() {
                     {recentMatches.map((m, i) => {
                         const blueWins = m.winner === 'Blue';
                         const redWins = m.winner === 'Red';
+                        const isDraw = !blueWins && !redWins;
+
+                        // Winner Colors: Gold for win, Grey for loss, White for draw
+                        const blueColor = blueWins ? '#FCD34D' : isDraw ? '#fff' : '#94a3b8';
+                        const redColor = redWins ? '#FCD34D' : isDraw ? '#fff' : '#94a3b8';
+
                         return (
-                            <View key={i} style={[s.rmCard, { borderLeftColor: blueWins ? '#1c83e1' : redWins ? '#ff4b4b' : '#64748b' }]}>
+                            <Pressable
+                                key={i}
+                                style={[s.rmCard, { borderLeftColor: blueWins ? '#3b82f6' : redWins ? '#ef4444' : '#fff' }]}
+                                onPress={() => {
+                                    Alert.alert(
+                                        'Re-use Lineup?',
+                                        `Log a new match with these players?`,
+                                        [
+                                            { text: 'Cancel', style: 'cancel' },
+                                            {
+                                                text: 'Yes, Load Players', onPress: () => {
+                                                    setDraftBlue(m.teamBlue);
+                                                    setDraftRed(m.teamRed);
+                                                    setReuseMode(true);
+                                                    setLogText(`REUSING LINEUP:\n${m.venue} (${m.date})`);
+                                                    setLogOpen(true);
+                                                }
+                                            }
+                                        ]
+                                    );
+                                }}
+                            >
                                 <Text style={s.rmDate}>{m.date} | {m.venue}</Text>
                                 <View style={s.rmScoreRow}>
-                                    <Text style={[s.rmScore, { color: blueWins ? '#4ade80' : '#ff4b4b' }]}>BLUE {m.scoreBlue}</Text>
-                                    <Text style={s.rmDash}> - </Text>
-                                    <Text style={[s.rmScore, { color: redWins ? '#4ade80' : '#ff4b4b' }]}>{m.scoreRed} RED</Text>
+                                    {/* Team Names always their own color */}
+                                    <View style={{ alignItems: 'flex-end', flex: 1 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                            {blueWins && <Text style={{ fontSize: 14, marginRight: 4 }}>🏆</Text>}
+                                            <Text style={{ color: '#3b82f6', fontWeight: '900', fontSize: 13 }}>BLUE</Text>
+                                        </View>
+                                        <Text style={[s.rmScore, { color: isDraw ? '#fff' : '#3b82f6' }]}>{m.scoreBlue}</Text>
+                                    </View>
+                                    <Text style={[s.rmDash, { color: '#fff' }]}>-</Text>
+                                    <View style={{ alignItems: 'flex-start', flex: 1 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                            <Text style={{ color: '#ef4444', fontWeight: '900', fontSize: 13 }}>RED</Text>
+                                            {redWins && <Text style={{ fontSize: 14, marginLeft: 4 }}>🏆</Text>}
+                                        </View>
+                                        <Text style={[s.rmScore, { color: isDraw ? '#fff' : '#ef4444' }]}>{m.scoreRed}</Text>
+                                    </View>
                                 </View>
-                                {/* Team rosters */}
-                                <Text style={[s.rmTeam, blueWins && s.rmWinTeam]} numberOfLines={2}>
+
+                                {/* Team rosters with Golden Glow for winners */}
+                                <Text
+                                    style={[
+                                        s.rmTeam,
+                                        { color: blueColor },
+                                        blueWins && { textShadowColor: 'rgba(252, 211, 77, 0.6)', textShadowRadius: 8, textShadowOffset: { width: 0, height: 0 } }
+                                    ]}
+                                    numberOfLines={2}
+                                >
                                     {m.teamBlue.join(', ')}
                                 </Text>
-                                <Text style={[s.rmTeam, redWins && s.rmWinTeam, { color: '#94a3b8' }]} numberOfLines={2}>
+                                <Text
+                                    style={[
+                                        s.rmTeam,
+                                        { color: redColor, marginTop: 4 },
+                                        redWins && { textShadowColor: 'rgba(252, 211, 77, 0.6)', textShadowRadius: 8, textShadowOffset: { width: 0, height: 0 } }
+                                    ]}
+                                    numberOfLines={2}
+                                >
                                     {m.teamRed.join(', ')}
                                 </Text>
-                            </View>
+                            </Pressable>
                         );
                     })}
 
@@ -389,6 +507,13 @@ export default function Analytics() {
                                     setLogOpen(false);
                                 } else {
                                     setLogOpen(true);
+                                    if (!logOpen) {
+                                        // Reset reuse mode when opening fresh (unless set by Add Match)
+                                        // Actually difficult to differentiate 'fresh' vs 'add match' here unless state is managed
+                                        // If reuseMode is true, keep it?
+                                        // But if user closes panel, we should reset.
+                                        // Let's reset on Close.
+                                    }
                                 }
                             }}
                         >
@@ -416,10 +541,27 @@ export default function Analytics() {
 
                         {showLogPassword && (
                             <View style={s.missionControl}>
-                                <Text style={s.mcTitle}>MISSION CONTROL ACTIVE</Text>
+                                <Text style={s.mcTitle}>{reuseMode ? 'LOG PAST MATCH' : 'MISSION CONTROL ACTIVE'}</Text>
 
-                                <Text style={s.mcLabel}>ACTIVE MATCH</Text>
-                                {logText ? <Text style={s.activeMatchText}>{logText}</Text> : null}
+                                {reuseMode ? (
+                                    <View style={{ marginBottom: 16 }}>
+                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                                            <View style={{ flex: 1, marginRight: 8 }}>
+                                                <Text style={{ color: '#3b82f6', fontWeight: 'bold', fontSize: 11, marginBottom: 4 }}>BLUE TEAM</Text>
+                                                <Text style={{ color: '#fff', fontSize: 10 }}>{draftBlue.join(', ')}</Text>
+                                            </View>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 11, marginBottom: 4 }}>RED TEAM</Text>
+                                                <Text style={{ color: '#fff', fontSize: 10 }}>{draftRed.join(', ')}</Text>
+                                            </View>
+                                        </View>
+                                    </View>
+                                ) : (
+                                    <>
+                                        <Text style={s.mcLabel}>ACTIVE MATCH</Text>
+                                        {logText ? <Text style={s.activeMatchText}>{logText}</Text> : null}
+                                    </>
+                                )}
 
                                 <View style={s.scoreRow}>
                                     <View>
@@ -459,62 +601,82 @@ export default function Analytics() {
                                 <Pressable
                                     style={s.mcFinishBtn}
                                     onPress={async () => {
-                                        if (!logMatchId) { Alert.alert('Error', 'No active match found to log.'); return; }
-
                                         const b = parseInt(manualBlue || '0');
                                         const r = parseInt(manualRed || '0');
                                         const c = manualComments || '';
 
-                                        const { finishMatch, startNewMatch } = await import('../../lib/matches');
+                                        if (reuseMode) {
+                                            // LOG NEW COMPLETED MATCH
+                                            const { createCompletedMatch } = await import('../../lib/matches');
 
-                                        // 1. Finish Current Match
-                                        const success = await finishMatch(logMatchId, r, b, c);
-                                        if (success) {
-                                            // 2. Auto-Start Next Match (Reset Lobby)
-                                            await startNewMatch();
+                                            // Need Player objects for DB insert?
+                                            // createCompletedMatch takes any[] for teams (for now) but ideally structured
+                                            // match.ts createCompletedMatch expects any[] (JSON)
+                                            // We have string[] in draftBlue/Red. map to objects {name: "..."}
+                                            const blueObjs = draftBlue.map(n => ({ name: n }));
+                                            const redObjs = draftRed.map(n => ({ name: n }));
 
-                                            Alert.alert('SUCCESS', 'Match Logged! Lobby has been reset for the next game.');
+                                            const success = await createCompletedMatch(
+                                                new Date().toISOString(),
+                                                'Turf', // Default venue? Or grab from previous match? We don't have it easily here unless stored.
+                                                new Date().toLocaleTimeString(),
+                                                '5v5',
+                                                redObjs,
+                                                blueObjs,
+                                                r,
+                                                b,
+                                                c,
+                                                'admin'
+                                            );
 
-                                            // Reset fields & Close Panel
-                                            setManualBlue('');
-                                            setManualRed('');
-                                            setManualComments('');
-                                            setLogPassword('');
-                                            setShowLogPassword(false);
-                                            setLogOpen(false);
+                                            if (success) {
+                                                Alert.alert('SUCCESS', 'Historical Match Logged!');
+                                                setManualBlue(''); setManualRed(''); setManualComments('');
+                                                setLogPassword(''); setShowLogPassword(false); setLogOpen(false);
+                                                setReuseMode(false);
+                                                loadSupabaseHistory(); // Refresh to show new match
+                                            } else {
+                                                Alert.alert('Error', 'Failed to log match.');
+                                            }
 
-                                            fetchActiveLoggingMatch();
-                                            loadSupabaseHistory();
                                         } else {
-                                            Alert.alert('Error', 'Failed to log match.');
+                                            // FINISH ACTIVE MATCH
+                                            if (!logMatchId) { Alert.alert('Error', 'No active match found to log.'); return; }
+
+                                            const { finishMatch, startNewMatch } = await import('../../lib/matches');
+
+                                            // 1. Finish Current Match
+                                            const success = await finishMatch(logMatchId, r, b, c);
+                                            if (success) {
+                                                // 2. Auto-Start Next Match (Reset Lobby)
+                                                await startNewMatch();
+
+                                                Alert.alert('SUCCESS', 'Match Logged! Lobby has been reset for the next game.');
+
+                                                // Reset fields & Close Panel
+                                                setManualBlue('');
+                                                setManualRed('');
+                                                setManualComments('');
+                                                setLogPassword('');
+                                                setShowLogPassword(false);
+                                                setLogOpen(false);
+
+                                                fetchActiveLoggingMatch();
+                                                loadSupabaseHistory();
+                                            } else {
+                                                Alert.alert('Error', 'Failed to log match.');
+                                            }
                                         }
                                     }}
                                 >
-                                    <Text style={s.mcFinishText}>🚀 FINISH & START NEW</Text>
+                                    <Text style={s.mcFinishText}>{reuseMode ? '💾 LOG MATCH & SAVE' : '🚀 FINISH & START NEW'}</Text>
                                 </Pressable>
                             </View>
                         )}
                     </View>
 
-                    {/* ═══ RECENT SUPABASE LOGS ═══ */}
-                    <View style={{ marginTop: 32, paddingHorizontal: 16 }}>
-                        <Text style={{ color: '#64748b', fontWeight: 'bold', fontSize: 12, marginBottom: 12, letterSpacing: 1 }}>RECENTLY LOGGED (SUPABASE)</Text>
-                        {supabaseHistory.map((m: any) => (
-                            <View key={m.id} style={s.historyCard}>
-                                <View style={s.histHeader}>
-                                    <Text style={s.histDate}>{new Date(m.created_at).toLocaleDateString()} • {m.venue}</Text>
-                                    <View style={s.histBadge}><Text style={s.histBadgeText}>COMPLETED</Text></View>
-                                </View>
-                                <View style={s.histScore}>
-                                    <Text style={[s.histTeam, { color: '#3b82f6' }]}>BLUE</Text>
-                                    <Text style={s.histNum}>{m.score_blue} - {m.score_red}</Text>
-                                    <Text style={[s.histTeam, { color: '#ef4444' }]}>RED</Text>
-                                </View>
-                                {m.comments ? <Text style={s.histComm} numberOfLines={2}>"{m.comments}"</Text> : null}
-                            </View>
-                        ))}
-                        {supabaseHistory.length === 0 && <Text style={{ color: '#475569', fontStyle: 'italic' }}>No recent logs found in Database.</Text>}
-                    </View>
+                    {/* ═══ RECENT SUPABASE LOGS (REMOVED - MERGED ABOVE) ═══ */}
+                    {/* The Supabase logs are now part of the main history and appear in "RECENT MATCHES" section */}
 
                     <View style={{ height: 60 }} />
                 </ScrollView>
