@@ -424,27 +424,9 @@ export default function Analytics() {
                         const redColor = redWins ? '#FCD34D' : isDraw ? '#fff' : '#94a3b8';
 
                         return (
-                            <Pressable
+                            <View
                                 key={i}
                                 style={[s.rmCard, { borderLeftColor: blueWins ? '#3b82f6' : redWins ? '#ef4444' : '#fff' }]}
-                                onPress={() => {
-                                    Alert.alert(
-                                        'Re-use Lineup?',
-                                        `Log a new match with these players?`,
-                                        [
-                                            { text: 'Cancel', style: 'cancel' },
-                                            {
-                                                text: 'Yes, Load Players', onPress: () => {
-                                                    setDraftBlue(m.teamBlue);
-                                                    setDraftRed(m.teamRed);
-                                                    setReuseMode(true);
-                                                    setLogText(`REUSING LINEUP:\n${m.venue} (${m.date})`);
-                                                    setLogOpen(true);
-                                                }
-                                            }
-                                        ]
-                                    );
-                                }}
                             >
                                 <Text style={s.rmDate}>{m.date} | {m.venue}</Text>
                                 <View style={s.rmScoreRow}>
@@ -487,7 +469,7 @@ export default function Analytics() {
                                 >
                                     {m.teamRed.join(', ')}
                                 </Text>
-                            </Pressable>
+                            </View>
                         );
                     })}
 

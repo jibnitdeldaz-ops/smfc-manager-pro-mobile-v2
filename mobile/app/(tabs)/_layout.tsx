@@ -43,6 +43,14 @@ export default function TabLayout() {
                     }}
                 />
                 <Tabs.Screen
+                    name="chat"
+                    options={{
+                        title: 'TEAM CHAT',
+                        headerShown: false,
+                        tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" size={size} color={color} />,
+                    }}
+                />
+                <Tabs.Screen
                     name="database"
                     options={{
                         title: 'FANTASY LEAGUE',
