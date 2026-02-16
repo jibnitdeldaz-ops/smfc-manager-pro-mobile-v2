@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "0d90f25d-3304-431f-b8a5-497310e45aaa"
+      }
+    },
+    "android": {
+      "package": "com.smfc.managerpro.v2"
+    }
+  }
+}

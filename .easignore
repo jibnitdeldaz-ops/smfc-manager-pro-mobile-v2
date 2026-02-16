@@ -1,0 +1,8 @@
+node_modules/
+.expo/
+npm-debug.log
+yarn-error.log
+.git/
+*.jks
+*.keystore
+!assets/
