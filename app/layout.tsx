@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Bebas_Neue, Barlow_Condensed, Barlow } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
+const bebas = Bebas_Neue({ weight: "400", subsets: ["latin"] });
+const barlowCondensed = Barlow_Condensed({ weight: ["300", "400", "600", "700"], subsets: ["latin"] });
+const barlow = Barlow({ weight: ["300", "400", "500"], subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "SMFC Manager - Real-time Squad Management",
