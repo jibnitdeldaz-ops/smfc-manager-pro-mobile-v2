@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Users, Shirt } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 
 interface Player {
   id: number;
@@ -17,6 +17,7 @@ interface Player {
 export default function TacticsPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedPlayers, setSelectedPlayers] = useState<number[]>([]);
 
   useEffect(() => {
@@ -26,6 +27,17 @@ export default function TacticsPage() {
   const fetchPlayers = async () => {
     try {
       setLoading(true);
+      setErrorMessage(null);
+
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        setPlayers([]);
+        setErrorMessage(
+          "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your deployment environment (Vercel) and restart the dev server locally."
+        );
+        return;
+      }
+
       const { data, error } = await supabase
         .from("players")
         .select("*")
@@ -35,6 +47,8 @@ export default function TacticsPage() {
       setPlayers(data || []);
     } catch (error) {
       console.error("Error fetching players:", error);
+      setPlayers([]);
+      setErrorMessage("Failed to load players from Supabase.");
     } finally {
       setLoading(false);
     }
@@ -62,6 +76,8 @@ export default function TacticsPage() {
           <CardContent>
             {loading ? (
               <div className="text-center py-8 text-slate-400">Loading players...</div>
+            ) : errorMessage ? (
+              <div className="text-center py-8 text-slate-400">{errorMessage}</div>
             ) : players.length === 0 ? (
               <div className="text-center py-8 text-slate-400">
                 No players found. Seed the database from Settings.

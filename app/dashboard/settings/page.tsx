@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 import { Database, Loader2 } from "lucide-react";
 
 const seedData = [
@@ -28,6 +28,14 @@ export default function SettingsPage() {
     setSeedMessage(null);
 
     try {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        setSeedMessage(
+          "Error: Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your environment variables (Vercel / local .env.local) and restart."
+        );
+        return;
+      }
+
       // First, check if players already exist
       const { data: existingPlayers, error: checkError } = await supabase
         .from("players")
